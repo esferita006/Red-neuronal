@@ -1,0 +1,214 @@
+!pip install mysql-connector-python
+
+import pandas as pd
+import mysql.connector
+
+# Conectaremos con la base de datos que encontramos
+mydb = mysql.connector.connect(
+  host="hpc-matematicas-z.fciencias.unam.mx",
+  user="JimmyNeutron",
+  password="CarlSheen",
+  database="LIMONADA"
+)
+
+# Definimos la consulta de SQL
+query = "SELECT * FROM VENTAS"
+
+# vamos a leer los datos de la base de datos y crearemos un DataFrame para poder interactuar con la informacion
+df = pd.read_sql(query, mydb)
+
+# Ahora podemoss trabajar con los datos del DataFrame de la base
+# por ejemplo, mostrar las primeras filas(pueden poner algun numero en el centro de los parentesis y seran las filas que saldran como dato curioso)
+print(df.head(20))
+
+
+##PASAMOS A ESTANDARIZAR
+# Calculamos la media y la desviación estándar de la columna de precios, luego estandarisaremos las columnas de precios
+
+precioMean = df['precio'].mean()
+precioStd = df['precio'].std()
+df['precio'] = (df ['precio']-precioMean)/precioStd
+
+#print("la media es:",precioMean ,"de precio")
+#print("la varianza es:",precioStd ,"de precio")
+
+# Calcula la media y la desviación estándar de la columna numSold, luego estandariza numSold
+vendidosMean = df['vendidos'].mean()
+vendidosStd = df['vendidos'].std()
+df ['vendidos'] = (df['vendidos']-vendidosMean)/vendidosStd
+
+#print("la media es:",vendidosMean,"de vendidos")
+
+df.head()
+
+# Creamos los tensores PyTorch y pasamos a CPU o GPU depende de la eficiencia y capacidad de cada uno
+import torch
+
+# Configuraramos nuestro el dispositivo
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+
+# Cree nuestros tensores PyTorch y pase a CPU o GPU si está disponible esto para que sea mas eficiente
+# Extraemos las entradas y creamos un tensor PyTorch x (entradas)
+inputs = ['fin_semana', 'soleado', 'caluroso', 'quincena', 'precio']
+x = torch.tensor(df[inputs].values,dtype=torch.float, device=device)
+
+# Extraemos las salidas y creamos un tensor PyTorch y (outputs)
+outputs = ['vendidos']
+y = torch.tensor(df[ outputs].values,dtype=torch.float, device=device)
+#para que entiendaan esto es por cada entrada debe de habaer una salida
+
+
+# imprimimos las primeras 5 entradas (seran como matrices qeu vemos en lineal y asi)
+x[0:5]
+
+
+##ELABORACION DE RED NEURONAL
+
+import torch
+import torch.nn as nn
+
+# Definimos la red neuronal PyTorch
+# Número de entradas: 5
+# Número de unidades ocultas: 100
+# Número de capas ocultas: 1
+# Función de activación: Relu
+# Número de salidas: 1
+
+model = nn.Sequential(
+            nn.Linear(5,100),
+            nn.ReLU(),
+            nn.Linear(100,1)
+        )
+
+# lo movemos a la CPU o GPU dependiendo de lo que tengamos disponible o sea mejor
+model.to(device)
+
+
+##ENTRENAMIENTO
+
+import torch.optim as optim
+
+# Medimos nuestra red neuronal según el
+criterio=torch.nn.MSELoss()
+
+# Entrenamos nuestra red con un optimizador SGD simple Optimizer
+optimizar = optim.SGD(model.parameters(), lr=0.01, momentum =0.9)
+
+# Entrenamos nuestra red usando el conjunto de datos completos 5 veces
+for epoch in range(5):
+    totalLoss = 0
+    for i in range(len(x)):
+       # Single Forward Pass
+        ypred = model(x[i])
+        # Medimos qué tan bien esta prediciendo el modelo frente al valor real
+        loss = criterio(ypred, y[i])
+
+        # Realizamos un seguimiento de qué tan bien predijo el modelo (llamado pérdida)
+        totalLoss+=loss.item()
+
+        # Actualizar la red neuronal
+        optimizar.zero_grad()
+        loss.backward()
+        optimizar.step()
+
+    # Imprime nuestra pérdida después de cada iteración de entrenamiento
+    print ("Pérdida total: ",totalLoss )
+
+    #cada vez que corramos esta celda la perdida total debera de disminuir pues la red va aprendiendo y acercandoce al valor real
+
+
+##MEDICION DE RENDIMIENTO
+import matplotlib.pyplot as plt
+# Graficamos nuestras predicciones vs. valores verdaderos
+@torch.no_grad()
+def prediccion_grafica(model, x, y , minValue, maxValue):
+    model.eval()
+    # Establecer el modelo en modo de inferencia
+
+    predicciones=[]
+    # Seguir predicciones
+    actual=[]
+    # Rastreamos las etiquetas reales
+
+    x.to(device)
+    y.to(device)
+    model.to(device)
+
+    for i in range(len(x)):
+        # Paso único hacia adelante
+        pred = model(x[i])
+
+        # Des- normalizar nuestra predicción
+        pred = pred*vendidosStd+vendidosMean
+        act = y[i]*vendidosStd+vendidosMean
+
+        # Guardar predicción y etiqueta real
+        predicciones.append(pred.tolist())
+        actual.append(act.item())
+
+    # Trazar datos reales vs predicciones
+    plt.scatter(actual, predicciones)
+    plt.xlabel('Limonadas vendidas')
+    plt.ylabel('Limonadas pronosticadas ')
+    plt.plot([minValue,maxValue], [minValue,maxValue])
+    plt.xlim(minValue, maxValue)
+    plt.ylim(minValue, maxValue)
+
+    # Hacer que la visualización sea igual en ambas dimensiones
+    plt.gca().set_aspect('equal', adjustable='box')
+    plt.show()
+
+prediccion_grafica(model, x, y, 0, 350)
+
+##PREDICCIONES PROPIAS
+# A continuación, usamos la fórmula del generador de datos sintéticos para
+# determinar cuál debería haber sido el resultado real.
+def datasetGenerator(fin_semana, soleado, calido, quincena, precio):
+    num_limonadasV = 0
+    if fin_semana:
+        num_limonadasV = (soleado * 5 + int(500 / precio))
+        if quincena:
+            num_limonadasV = 1.3 * num_limonadasV
+        if calido:
+            num_limonadasV = 2 * num_limonadasV
+        if soleado:
+            num_limonadasV = 1.25 * num_limonadasV
+    num_limonadasV = int(num_limonadasV)
+
+    return num_limonadasV
+
+
+# Datos que afectan la cantidad de limones vendidos en un día
+fin_semana = 1
+soleado = 0
+calido = 0
+quincena = 1
+precio = 5
+
+# Calcule cuál hubiera sido el resultado real usando
+# el algoritmo del conjunto de datos sintético
+actual = datasetGenerator(fin_semana, soleado, calido, quincena, precio)
+
+# Use la CPU ya que solo necesitamos hacer un cálculo único
+model.to('cpu')
+
+# Normalizar nuestras entradas usando los mismos valores para nuestro entrenamiento
+precio = (precio - precioMean) / precioStd
+
+# Crear nuestro tensor de entrada
+x1 = torch.tensor([fin_semana, soleado, calido, quincena, precio], dtype=torch.float)
+
+# Pasar la entrada a la red neuronal
+y1 = model(x1)
+
+# Desnormalizar nuestra salida y1
+y1 = y1 * vendidosStd + vendidosMean
+
+# Comparar lo que su red predijo con el resultado real
+print("Neural Network Predicts:", y1.item())
+print("Resultado real:", actual)
+
+
+
+
